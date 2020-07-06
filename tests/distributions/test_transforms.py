@@ -113,7 +113,7 @@ class TransformTests(TestCase):
         sample = dist.TransformedDistribution(base_dist, [transform]).sample()
         assert sample.shape == base_shape
 
-    def _test(self, transform_factory, shape=True, jacobian=True, inverse=True, event_dim=1):
+    def _test(self, transform_factory, shape=True, jacobian=True, inverse=True, normalization=False, event_dim=1):
         for event_shape in [(2,), (5,)]:
             if event_dim > 1:
                 event_shape = tuple([event_shape[0] + i for i in range(event_dim)])
@@ -129,6 +129,17 @@ class TransformTests(TestCase):
                 if event_dim > 1:
                     transform = Flatten(transform, event_shape)
                 self._test_jacobian(reduce(operator.mul, event_shape, 1), transform)
+        
+        if normalization:
+            if event_dim > 1:
+                event_shape = tuple([1]*event_dim)
+                transform = Flatten(transform, event_shape)
+            else:
+                event_shape = (2,)
+            self._test_normalization_constant(reduce(operator.mul, event_shape, 1), transform)
+
+    def _test_normalization_constant(self, input_dim, transform):
+        
 
     def _test_conditional(self, conditional_transform_factory, context_dim=3, event_dim=1, **kwargs):
         def transform_factory(input_dim, context_dim=context_dim):
