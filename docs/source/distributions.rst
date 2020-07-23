@@ -476,6 +476,13 @@ ConditionalSpline
     :undoc-members:
     :show-inheritance:
 
+ConditionalSplineCoupling
+-------------------------
+.. autoclass:: pyro.distributions.transforms.ConditionalSplineCoupling
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
 ConditionalTransformModule
 --------------------------
 .. autoclass:: pyro.distributions.ConditionalTransformModule
@@ -631,6 +638,10 @@ conditional_radial
 conditional_spline
 ------------------
 .. autofunction:: pyro.distributions.transforms.conditional_spline
+
+conditional_spline_coupling
+---------------------------
+.. autofunction:: pyro.distributions.transforms.conditional_spline_coupling
 
 elu
 ---

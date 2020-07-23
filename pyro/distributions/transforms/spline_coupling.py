@@ -1,13 +1,16 @@
 # Copyright Contributors to the Pyro project.
 # SPDX-License-Identifier: Apache-2.0
 
+from functools import partial
+
 import torch
 from torch.distributions import constraints
 
+from pyro.distributions.conditional import ConditionalTransformModule
 from pyro.distributions.torch_transform import TransformModule
 from pyro.distributions.transforms.spline import ConditionalSpline, Spline
 from pyro.distributions.util import copy_docs_from
-from pyro.nn import DenseNN
+from pyro.nn import ConditionalDenseNN, DenseNN
 
 
 @copy_docs_from(TransformModule)
@@ -83,7 +86,8 @@ class SplineCoupling(TransformModule):
 
         # One part of the input is (optionally) put through an element-wise spline and the other part through a
         # conditional one that inputs the first part.
-        self.lower_spline = Spline(split_dim, count_bins, bound, order)
+        if not identity:
+            self.lower_spline = Spline(split_dim, count_bins, bound, order)
         self.upper_spline = ConditionalSpline(hypernet, input_dim - split_dim, count_bins, bound, order)
         self.split_dim = split_dim
         self.identity = identity
@@ -152,6 +156,95 @@ class SplineCoupling(TransformModule):
             self(x)
 
         return self._cache_log_detJ.sum(-1)
+
+
+@copy_docs_from(ConditionalTransformModule)
+class ConditionalAffineCoupling(ConditionalTransformModule):
+    r"""
+    An implementation of the coupling layer with rational spline bijections of
+    linear and quadratic order (Durkan et al., 2019; Dolatabadi et al., 2020) that
+    conditions on an additional context variable. Rational splines are functions
+    that are comprised of segments that are the ratio of two polynomials (see
+    :class:`~pyro.distributions.transforms.Spline`).
+
+    The spline coupling layer uses the transformation,
+
+        :math:`\mathbf{y}_{1:d} = g_\theta(\mathbf{x}_{1:d})`
+        :math:`\mathbf{y}_{(d+1):D} = h_\phi(\mathbf{x}_{(d+1):D};\mathbf{x}_{1:d})`
+
+    where :math:`\mathbf{x}` are the inputs, :math:`\mathbf{y}` are the outputs,
+    e.g. :math:`\mathbf{x}_{1:d}` represents the first :math:`d` elements of the
+    inputs, :math:`g_\theta` is either the identity function or an elementwise
+    rational monotonic spline with parameters :math:`\theta`, and :math:`h_\phi` is
+    a conditional elementwise spline spline, conditioning on the first :math:`d`
+    elements. The parameters :math:`\theta` are the output of a neural network
+    inputting the context variable :math:`\mathbf{z}`, and :math:`\phi` is the
+    output of a network inputting both :math:`\mathbf{z}` and
+    :math:`(\mathbf{x}_{1:d}`.
+
+    Example usage:
+
+    >>> from pyro.nn import DenseNN
+    >>> input_dim = 10
+    >>> split_dim = 6
+    >>> count_bins = 8
+    >>> base_dist = dist.Normal(torch.zeros(input_dim), torch.ones(input_dim))
+    >>> param_dims = [(input_dim - split_dim) * count_bins,
+    ... (input_dim - split_dim) * count_bins,
+    ... (input_dim - split_dim) * (count_bins - 1),
+    ... (input_dim - split_dim) * count_bins]
+    >>> hypernet = DenseNN(split_dim, [10*input_dim], param_dims)
+    >>> transform = SplineCoupling(input_dim, split_dim, hypernet)
+    >>> pyro.module("my_transform", transform)  # doctest: +SKIP
+    >>> flow_dist = dist.TransformedDistribution(base_dist, [transform])
+    >>> flow_dist.sample()  # doctest: +SKIP
+
+    :param input_dim: Dimension of the input vector. Despite operating element-wise,
+        this is required so we know how many parameters to store.
+    :type input_dim: int
+    :param split_dim: Zero-indexed dimension :math:`d` upon which to perform input/
+        output split for transformation.
+    :param hypernet: a neural network whose forward call returns a tuple of spline
+        parameters (see :class:`~pyro.distributions.transforms.ConditionalSpline`).
+    :type hypernet: callable
+    :param count_bins: The number of segments comprising the spline.
+    :type count_bins: int
+    :param bound: The quantity :math:`K` determining the bounding box,
+        :math:`[-K,K]\times[-K,K]`, of the spline.
+    :type bound: float
+    :param order: One of ['linear', 'quadratic'] specifying the order of the spline.
+    :type order: string
+
+    References:
+
+    Conor Durkan, Artur Bekasov, Iain Murray, George Papamakarios. Neural
+    Spline Flows. NeurIPS 2019.
+
+    Hadi M. Dolatabadi, Sarah Erfani, Christopher Leckie. Invertible Generative
+    Modeling using Linear Rational Splines. AISTATS 2020.
+
+    """
+
+    domain = constraints.real_vector
+    codomain = constraints.real_vector
+    bijective = True
+    event_dim = 1
+
+    def __init__(self, split_dim, hypernet, identity=False, **kwargs):
+        super().__init__()
+        self.split_dim = split_dim
+        self.nn = hypernet
+        self.identity = identity
+        self.kwargs = kwargs
+
+    # *** Continue from here! ***
+    def condition(self, context):
+        cond_nn = partial(self.nn, context=context)
+        t = SplineCoupling(self.split_dim, cond_nn, identity=True, **self.kwargs)
+        if not self.identity:
+            t.lower_spline = ConditionalSpline(split_dim, , count_bins, bound, order)
+            t.identity = False
+        return t
 
 
 def spline_coupling(input_dim, split_dim=None, hidden_dims=None, count_bins=8, bound=3.0):
